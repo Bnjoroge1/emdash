@@ -132,14 +132,21 @@ export async function parseSshConfigFile(): Promise<SshConfigHost[]> {
   return hosts;
 }
 
-export async function resolveSshConfigHost(hostname: string): Promise<SshConfigHost | undefined> {
+export async function resolveSshConfigHost(
+  hostname: string,
+  options?: { allowHostNameMatch?: boolean }
+): Promise<SshConfigHost | undefined> {
   try {
     const hosts = await parseSshConfigFile();
-    return hosts.find(
-      (h) =>
-        h.host.toLowerCase() === hostname.toLowerCase() ||
-        h.hostname?.toLowerCase() === hostname.toLowerCase()
-    );
+    const query = hostname.toLowerCase();
+    const aliasMatch = hosts.find((h) => h.host.toLowerCase() === query);
+    if (aliasMatch) {
+      return aliasMatch;
+    }
+    if (options?.allowHostNameMatch) {
+      return hosts.find((h) => h.hostname?.toLowerCase() === query);
+    }
+    return undefined;
   } catch {
     return undefined;
   }
@@ -153,6 +160,6 @@ export async function resolveSshConfigHost(hostname: string): Promise<SshConfigH
  * IdentityAgent path if found, or undefined.
  */
 export async function resolveIdentityAgent(hostname: string): Promise<string | undefined> {
-  const match = await resolveSshConfigHost(hostname);
+  const match = await resolveSshConfigHost(hostname, { allowHostNameMatch: true });
   return match?.identityAgent;
 }

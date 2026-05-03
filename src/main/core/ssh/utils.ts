@@ -2,7 +2,7 @@ import type { IExecutionContext } from '@main/core/execution-context/types';
 import { resolveSshConfigHost } from '@main/core/ssh/sshConfigParser';
 
 export async function resolveIdentityAgent(hostname: string): Promise<string | undefined> {
-  const match = await resolveSshConfigHost(hostname);
+  const match = await resolveSshConfigHost(hostname, { allowHostNameMatch: true });
   return match?.identityAgent;
 }
 

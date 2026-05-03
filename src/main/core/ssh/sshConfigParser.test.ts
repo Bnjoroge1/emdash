@@ -34,7 +34,7 @@ Host macstudio
     ]);
   });
 
-  it('resolves by Host alias or HostName', async () => {
+  it('resolves by Host alias by default', async () => {
     vi.mocked(readFile).mockResolvedValueOnce(`
 Host macstudio
   HostName 10.0.0.55
@@ -45,13 +45,26 @@ Host macstudio
       hostname: '10.0.0.55',
       proxyJump: 'bastion',
     });
+  });
 
+  it('does not apply reverse HostName matching by default', async () => {
     vi.mocked(readFile).mockResolvedValueOnce(`
 Host macstudio
   HostName 10.0.0.55
   ProxyJump bastion
 `);
-    await expect(resolveSshConfigHost('10.0.0.55')).resolves.toMatchObject({
+    await expect(resolveSshConfigHost('10.0.0.55')).resolves.toBeUndefined();
+  });
+
+  it('can resolve by HostName when explicitly allowed', async () => {
+    vi.mocked(readFile).mockResolvedValueOnce(`
+Host macstudio
+  HostName 10.0.0.55
+  ProxyJump bastion
+`);
+    await expect(
+      resolveSshConfigHost('10.0.0.55', { allowHostNameMatch: true })
+    ).resolves.toMatchObject({
       host: 'macstudio',
       hostname: '10.0.0.55',
       proxyJump: 'bastion',

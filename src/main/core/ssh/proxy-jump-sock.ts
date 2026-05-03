@@ -54,14 +54,32 @@ export function buildProxyJumpSocket(
   }
   args.push(jump.destination);
 
-  const child = spawn('ssh', args, { stdio: ['pipe', 'pipe', 'ignore'] });
+  const child = spawn('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'] });
   const sock = Duplex.from({
     writable: child.stdin,
     readable: child.stdout,
   });
+  let stderrOutput = '';
 
   child.once('error', (error) => {
     sock.destroy(error);
+  });
+
+  child.stderr?.setEncoding('utf-8');
+  child.stderr?.on('data', (chunk: string) => {
+    stderrOutput += chunk;
+    // Cap retained stderr to prevent unbounded growth if the process is noisy.
+    if (stderrOutput.length > 4096) {
+      stderrOutput = stderrOutput.slice(-4096);
+    }
+  });
+
+  child.once('exit', (code, signal) => {
+    if (sock.destroyed || code === 0) return;
+    const reason = signal ? `signal ${signal}` : `exit code ${code}`;
+    const stderr = stderrOutput.trim();
+    const detail = stderr ? `: ${stderr}` : '';
+    sock.destroy(new Error(`ProxyJump command failed (${reason})${detail}`));
   });
 
   sock.once('close', () => {

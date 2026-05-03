@@ -75,4 +75,17 @@ describe('buildProxyJumpSocket', () => {
     expect(error.message).toContain('ProxyJump command failed (exit code 255)');
     expect(error.message).toContain('Permission denied (publickey)');
   });
+
+  it('forwards stderr lines through onStderrLine callback', () => {
+    const child = makeMockChild();
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>);
+    const stderrLines: string[] = [];
+
+    buildProxyJumpSocket('target.internal', 22, 'bastion', {
+      onStderrLine: (line) => stderrLines.push(line),
+    });
+
+    child.stderr.write('first line\nsecond line\n');
+    expect(stderrLines).toEqual(['first line', 'second line']);
+  });
 });

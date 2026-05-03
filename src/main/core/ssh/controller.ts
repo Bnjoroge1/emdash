@@ -149,7 +149,9 @@ export const sshController = createRPCController({
           connectConfig.agent = identityAgent || process.env.SSH_AUTH_SOCK;
         }
         if (proxyJump) {
-          proxySock = buildProxyJumpSocket(targetHost, targetPort, proxyJump);
+          proxySock = buildProxyJumpSocket(targetHost, targetPort, proxyJump, {
+            onStderrLine: (line) => debugLogs.push(`[ProxyJump] ${line}`),
+          });
           connectConfig.sock = proxySock;
           debugLogs.push(`Using ProxyJump via ${proxyJump}`);
         }

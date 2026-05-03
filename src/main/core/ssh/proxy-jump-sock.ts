@@ -36,7 +36,8 @@ function splitProxyJumpEntry(proxyJump: string): { destination: string; port?: s
 export function buildProxyJumpSocket(
   targetHost: string,
   targetPort: number,
-  proxyJump: string
+  proxyJump: string,
+  options?: { onStderrLine?: (line: string) => void }
 ): Duplex {
   const jump = splitProxyJumpEntry(proxyJump);
   const args = [
@@ -68,6 +69,14 @@ export function buildProxyJumpSocket(
   child.stderr?.setEncoding('utf-8');
   child.stderr?.on('data', (chunk: string) => {
     stderrOutput += chunk;
+    if (options?.onStderrLine) {
+      for (const line of chunk.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed) {
+          options.onStderrLine(trimmed);
+        }
+      }
+    }
     // Cap retained stderr to prevent unbounded growth if the process is noisy.
     if (stderrOutput.length > 4096) {
       stderrOutput = stderrOutput.slice(-4096);

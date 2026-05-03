@@ -2,8 +2,9 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import type { ConnectConfig } from 'ssh2';
 import { sshCredentialService } from '@main/core/ssh/ssh-credential-service';
-import { resolveIdentityAgent } from '@main/core/ssh/sshConfigParser';
+import { resolveSshConfigHost } from '@main/core/ssh/sshConfigParser';
 import type { SshConnectionRow } from '@main/db/schema';
+import { buildProxyJumpSocket } from './proxy-jump-sock';
 
 /**
  * Build an ssh2 `ConnectConfig` from a stored `SshConnectionRow`.
@@ -11,14 +12,24 @@ import type { SshConnectionRow } from '@main/db/schema';
 export async function buildConnectConfigFromRow(
   row: SshConnectionRow
 ): Promise<ConnectConfig | undefined> {
+  const configHost = await resolveSshConfigHost(row.host);
+  const targetHost = configHost?.hostname ?? row.host;
+  const targetPort = configHost?.port ?? row.port;
+  const targetUsername = configHost?.user ?? row.username;
+  const identityAgent = configHost?.identityAgent;
+  const proxyJump = configHost?.proxyJump;
+
   const base: ConnectConfig = {
-    host: row.host,
-    port: row.port,
-    username: row.username,
+    host: targetHost,
+    port: targetPort,
+    username: targetUsername,
     readyTimeout: 20_000,
     keepaliveInterval: 60_000,
     keepaliveCountMax: 3,
   };
+  if (proxyJump) {
+    base.sock = buildProxyJumpSocket(targetHost, targetPort, proxyJump);
+  }
 
   switch (row.authType) {
     case 'password': {
@@ -45,7 +56,6 @@ export async function buildConnectConfigFromRow(
     }
 
     case 'agent': {
-      const identityAgent = await resolveIdentityAgent(row.host);
       const agent = identityAgent || process.env.SSH_AUTH_SOCK;
       if (!agent) {
         throw new Error(

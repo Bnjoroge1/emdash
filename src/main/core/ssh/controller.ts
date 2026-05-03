@@ -9,9 +9,10 @@ import { db } from '@main/db/client';
 import { sshConnections as sshConnectionsTable, type SshConnectionInsert } from '@main/db/schema';
 import { log } from '@main/lib/logger';
 import { capture } from '@main/lib/telemetry';
+import { buildProxyJumpSocket } from './proxy-jump-sock';
 import { sshConnectionManager } from './ssh-connection-manager';
 import { sshCredentialService } from './ssh-credential-service';
-import { resolveIdentityAgent } from './utils';
+import { resolveSshConfigHost } from './sshConfigParser';
 
 export const sshController = createRPCController({
   /** List all saved SSH connections (no secrets). */
@@ -103,10 +104,12 @@ export const sshController = createRPCController({
   testConnection: async (
     config: SshConfig & { password?: string; passphrase?: string }
   ): Promise<ConnectionTestResult> => {
-    let identityAgent: string | undefined;
-    if (config.authType === 'agent') {
-      identityAgent = await resolveIdentityAgent(config.host);
-    }
+    const configHost = await resolveSshConfigHost(config.host);
+    const targetHost = configHost?.hostname ?? config.host;
+    const targetPort = configHost?.port ?? config.port;
+    const targetUsername = configHost?.user ?? config.username;
+    const identityAgent = configHost?.identityAgent;
+    const proxyJump = configHost?.proxyJump;
 
     return new Promise((resolve) => {
       const client = new Client();
@@ -127,12 +130,16 @@ export const sshController = createRPCController({
 
       try {
         const connectConfig: Parameters<Client['connect']>[0] = {
-          host: config.host,
-          port: config.port,
-          username: config.username,
+          host: targetHost,
+          port: targetPort,
+          username: targetUsername,
           readyTimeout: 10_000,
           debug: (info: string) => debugLogs.push(info),
         };
+        if (proxyJump) {
+          connectConfig.sock = buildProxyJumpSocket(targetHost, targetPort, proxyJump);
+          debugLogs.push(`Using ProxyJump via ${proxyJump}`);
+        }
 
         if (config.authType === 'password') {
           connectConfig.password = config.password;

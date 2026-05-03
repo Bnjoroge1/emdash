@@ -1,5 +1,61 @@
-import { spawn } from 'node:child_process';
-import { Duplex } from 'node:stream';
+import { spawn, type ChildProcessByStdio } from 'node:child_process';
+import { Duplex, type Readable, type Writable } from 'node:stream';
+
+type SshChild = ChildProcessByStdio<Writable, Readable, Readable>;
+
+/**
+ * Duplex wrapper around a child process's stdin/stdout that behaves like a
+ * net.Socket: writes are forwarded atomically (preserving SSH packet framing),
+ * reads are pushed in order, and lifecycle is tied to the child process.
+ *
+ * `Duplex.from({writable, readable})` is unsuitable here because it composes
+ * two independent streams without enforcing write ordering or proper
+ * backpressure, which corrupts ssh2's transport framing under concurrent
+ * channel opens.
+ */
+class ProcessSocket extends Duplex {
+  private readonly child: SshChild;
+  private endedReadable = false;
+
+  constructor(child: SshChild) {
+    super({ allowHalfOpen: true });
+    this.child = child;
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (!this.push(chunk)) {
+        child.stdout.pause();
+      }
+    });
+    child.stdout.once('end', () => this.endReadable());
+    child.stdout.once('error', (err) => this.destroy(err));
+    child.stdin.on('error', (err) => this.destroy(err));
+  }
+
+  private endReadable(): void {
+    if (this.endedReadable) return;
+    this.endedReadable = true;
+    this.push(null);
+  }
+
+  override _read(): void {
+    this.child.stdout.resume();
+  }
+
+  override _write(chunk: Buffer, _enc: BufferEncoding, cb: (err?: Error | null) => void): void {
+    this.child.stdin.write(chunk, (err) => cb(err ?? null));
+  }
+
+  override _final(cb: (err?: Error | null) => void): void {
+    this.child.stdin.end(cb);
+  }
+
+  override _destroy(err: Error | null, cb: (err: Error | null) => void): void {
+    if (!this.child.killed && this.child.exitCode === null) {
+      this.child.kill();
+    }
+    cb(err);
+  }
+}
 
 function splitProxyJumpEntry(proxyJump: string): { destination: string; port?: string } {
   const firstHop = proxyJump.split(',')[0]?.trim() ?? '';
@@ -55,19 +111,16 @@ export function buildProxyJumpSocket(
   }
   args.push(jump.destination);
 
-  const child = spawn('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'] });
-  const sock = Duplex.from({
-    writable: child.stdin,
-    readable: child.stdout,
-  });
+  const child = spawn('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'] }) as SshChild;
+  const sock = new ProcessSocket(child);
   let stderrOutput = '';
 
   child.once('error', (error) => {
     sock.destroy(error);
   });
 
-  child.stderr?.setEncoding('utf-8');
-  child.stderr?.on('data', (chunk: string) => {
+  child.stderr.setEncoding('utf-8');
+  child.stderr.on('data', (chunk: string) => {
     stderrOutput += chunk;
     if (options?.onStderrLine) {
       for (const line of chunk.split('\n')) {
@@ -89,12 +142,6 @@ export function buildProxyJumpSocket(
     const stderr = stderrOutput.trim();
     const detail = stderr ? `: ${stderr}` : '';
     sock.destroy(new Error(`ProxyJump command failed (${reason})${detail}`));
-  });
-
-  sock.once('close', () => {
-    if (!child.killed) {
-      child.kill();
-    }
   });
 
   return sock;

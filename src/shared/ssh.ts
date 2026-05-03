@@ -123,4 +123,5 @@ export interface SshConfigHost {
   port?: number;
   identityFile?: string;
   identityAgent?: string;
+  proxyJump?: string;
 }

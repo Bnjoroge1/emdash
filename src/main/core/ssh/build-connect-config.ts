@@ -27,9 +27,7 @@ export async function buildConnectConfigFromRow(
     keepaliveInterval: 60_000,
     keepaliveCountMax: 3,
   };
-  if (proxyJump) {
-    base.sock = buildProxyJumpSocket(targetHost, targetPort, proxyJump);
-  }
+  const authConfig: Partial<ConnectConfig> = {};
 
   switch (row.authType) {
     case 'password': {
@@ -37,7 +35,8 @@ export async function buildConnectConfigFromRow(
       if (!password) {
         throw new Error(`No password found for SSH connection '${row.name}' (id: ${row.id})`);
       }
-      return { ...base, password };
+      authConfig.password = password;
+      break;
     }
 
     case 'key': {
@@ -52,7 +51,11 @@ export async function buildConnectConfigFromRow(
       }
       const privateKey = await readFile(keyPath, 'utf-8');
       const passphrase = await sshCredentialService.getPassphrase(row.id);
-      return { ...base, privateKey, ...(passphrase ? { passphrase } : {}) };
+      authConfig.privateKey = privateKey;
+      if (passphrase) {
+        authConfig.passphrase = passphrase;
+      }
+      break;
     }
 
     case 'agent': {
@@ -63,11 +66,18 @@ export async function buildConnectConfigFromRow(
             'Ensure the SSH agent is running or use key/password auth.'
         );
       }
-      return { ...base, agent };
+      authConfig.agent = agent;
+      break;
     }
 
     default: {
       throw new Error(`Unsupported SSH auth type: ${(row as { authType: string }).authType}`);
     }
   }
+
+  const config: ConnectConfig = { ...base, ...authConfig };
+  if (proxyJump) {
+    config.sock = buildProxyJumpSocket(targetHost, targetPort, proxyJump);
+  }
+  return config;
 }

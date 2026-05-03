@@ -115,6 +115,7 @@ export const sshController = createRPCController({
       const client = new Client();
       const debugLogs: string[] = [];
       const startTime = Date.now();
+      let proxySock: ReturnType<typeof buildProxyJumpSocket> | undefined;
 
       client.on('ready', () => {
         const latency = Date.now() - startTime;
@@ -136,10 +137,6 @@ export const sshController = createRPCController({
           readyTimeout: 10_000,
           debug: (info: string) => debugLogs.push(info),
         };
-        if (proxyJump) {
-          connectConfig.sock = buildProxyJumpSocket(targetHost, targetPort, proxyJump);
-          debugLogs.push(`Using ProxyJump via ${proxyJump}`);
-        }
 
         if (config.authType === 'password') {
           connectConfig.password = config.password;
@@ -151,9 +148,17 @@ export const sshController = createRPCController({
         } else if (config.authType === 'agent') {
           connectConfig.agent = identityAgent || process.env.SSH_AUTH_SOCK;
         }
+        if (proxyJump) {
+          proxySock = buildProxyJumpSocket(targetHost, targetPort, proxyJump);
+          connectConfig.sock = proxySock;
+          debugLogs.push(`Using ProxyJump via ${proxyJump}`);
+        }
 
         client.connect(connectConfig);
       } catch (e) {
+        // If local setup failed after we spawned the ProxyJump subprocess,
+        // ensure its stream/process is torn down immediately.
+        proxySock?.destroy();
         capture('ssh_connection_attempted', { success: false });
         resolve({ success: false, error: (e as Error).message, debugLogs });
       }

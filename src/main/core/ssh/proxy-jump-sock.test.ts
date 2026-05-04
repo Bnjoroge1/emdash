@@ -76,6 +76,53 @@ describe('buildProxyJumpSocket', () => {
     expect(error.message).toContain('Permission denied (publickey)');
   });
 
+  it('passes earlier hops via -J and uses the final hop as the destination', () => {
+    const child = makeMockChild();
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>);
+
+    buildProxyJumpSocket(
+      'target.internal',
+      22,
+      'alice@hop1.example.com:2201, hop2.example.com , bob@hop3.example.com:2203'
+    );
+
+    expect(spawn).toHaveBeenCalledWith(
+      'ssh',
+      [
+        '-o',
+        'BatchMode=yes',
+        '-o',
+        'ControlMaster=no',
+        '-o',
+        'ControlPath=none',
+        '-J',
+        'alice@hop1.example.com:2201,hop2.example.com',
+        '-W',
+        'target.internal:22',
+        '-p',
+        '2203',
+        'bob@hop3.example.com',
+      ],
+      { stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+  });
+
+  it('reports "unknown exit" when child exits with neither code nor signal', async () => {
+    const child = makeMockChild();
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>);
+
+    const socket = buildProxyJumpSocket('target.internal', 22, 'bastion');
+    const errorPromise = new Promise<Error>((resolve) => {
+      socket.once('error', (error) => resolve(error as Error));
+    });
+
+    child.emit('exit', null, null);
+
+    const error = await errorPromise;
+    expect(error.message).toContain('ProxyJump command failed (unknown exit)');
+    expect(error.message).not.toContain('null');
+  });
+
   it('forwards stderr lines through onStderrLine callback', () => {
     const child = makeMockChild();
     vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>);

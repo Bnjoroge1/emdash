@@ -57,25 +57,25 @@ class ProcessSocket extends Duplex {
   }
 }
 
-function splitProxyJumpEntry(proxyJump: string): { destination: string; port?: string } {
-  const firstHop = proxyJump.split(',')[0]?.trim() ?? '';
-  const uriMatch = firstHop.match(/^ssh:\/\/(?:(.+?)@)?(\[[^\]]+\]|[^:/?#]+)(?::(\d+))?$/i);
+function splitProxyJumpEntry(entry: string): { destination: string; port?: string } {
+  const hop = entry.trim();
+  const uriMatch = hop.match(/^ssh:\/\/(?:(.+?)@)?(\[[^\]]+\]|[^:/?#]+)(?::(\d+))?$/i);
   if (uriMatch) {
     const user = uriMatch[1];
     const host = uriMatch[2];
     return { destination: user ? `${user}@${host}` : host, port: uriMatch[3] };
   }
 
-  const ipv6Match = firstHop.match(/^(.*@)?(\[[^\]]+\])(?::(\d+))?$/);
+  const ipv6Match = hop.match(/^(.*@)?(\[[^\]]+\])(?::(\d+))?$/);
   if (ipv6Match) {
     const user = ipv6Match[1]?.slice(0, -1);
     const host = ipv6Match[2];
     return { destination: user ? `${user}@${host}` : host, port: ipv6Match[3] };
   }
 
-  const atIdx = firstHop.lastIndexOf('@');
-  const hostPort = atIdx >= 0 ? firstHop.slice(atIdx + 1) : firstHop;
-  const user = atIdx >= 0 ? firstHop.slice(0, atIdx) : '';
+  const atIdx = hop.lastIndexOf('@');
+  const hostPort = atIdx >= 0 ? hop.slice(atIdx + 1) : hop;
+  const user = atIdx >= 0 ? hop.slice(0, atIdx) : '';
   const colonIdx = hostPort.lastIndexOf(':');
 
   if (colonIdx > 0) {
@@ -86,7 +86,22 @@ function splitProxyJumpEntry(proxyJump: string): { destination: string; port?: s
     }
   }
 
-  return { destination: firstHop };
+  return { destination: hop };
+}
+
+function parseProxyJumpChain(proxyJump: string): {
+  intermediates: string[];
+  final: { destination: string; port?: string };
+} {
+  const hops = proxyJump
+    .split(',')
+    .map((h) => h.trim())
+    .filter((h) => h.length > 0);
+  const finalHop = hops[hops.length - 1] ?? '';
+  return {
+    intermediates: hops.slice(0, -1),
+    final: splitProxyJumpEntry(finalHop),
+  };
 }
 
 export function buildProxyJumpSocket(
@@ -95,21 +110,18 @@ export function buildProxyJumpSocket(
   proxyJump: string,
   options?: { onStderrLine?: (line: string) => void }
 ): Duplex {
-  const jump = splitProxyJumpEntry(proxyJump);
-  const args = [
-    '-o',
-    'BatchMode=yes',
-    '-o',
-    'ControlMaster=no',
-    '-o',
-    'ControlPath=none',
-    '-W',
-    `${targetHost}:${targetPort}`,
-  ];
-  if (jump.port) {
-    args.push('-p', jump.port);
+  const { intermediates, final } = parseProxyJumpChain(proxyJump);
+  const args = ['-o', 'BatchMode=yes', '-o', 'ControlMaster=no', '-o', 'ControlPath=none'];
+  if (intermediates.length > 0) {
+    // Chain through earlier hops with -J; the final hop is the SSH destination
+    // and is what -W tunnels stdio through to reach targetHost:targetPort.
+    args.push('-J', intermediates.join(','));
   }
-  args.push(jump.destination);
+  args.push('-W', `${targetHost}:${targetPort}`);
+  if (final.port) {
+    args.push('-p', final.port);
+  }
+  args.push(final.destination);
 
   const child = spawn('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'] }) as SshChild;
   const sock = new ProcessSocket(child);
@@ -138,7 +150,11 @@ export function buildProxyJumpSocket(
 
   child.once('exit', (code, signal) => {
     if (sock.destroyed || code === 0) return;
-    const reason = signal ? `signal ${signal}` : `exit code ${code}`;
+    const reason = signal
+      ? `signal ${signal}`
+      : code != null
+        ? `exit code ${code}`
+        : 'unknown exit';
     const stderr = stderrOutput.trim();
     const detail = stderr ? `: ${stderr}` : '';
     sock.destroy(new Error(`ProxyJump command failed (${reason})${detail}`));

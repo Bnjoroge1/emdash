@@ -10,6 +10,7 @@ import { sshConnections as sshConnectionsTable, type SshConnectionInsert } from 
 import { log } from '@main/lib/logger';
 import { capture } from '@main/lib/telemetry';
 import { buildProxyJumpSocket } from './proxy-jump-sock';
+import { telemetryService } from '@main/lib/telemetry';
 import { sshConnectionManager } from './ssh-connection-manager';
 import { sshCredentialService } from './ssh-credential-service';
 import { resolveSshConfigHost } from './sshConfigParser';
@@ -120,12 +121,12 @@ export const sshController = createRPCController({
       client.on('ready', () => {
         const latency = Date.now() - startTime;
         client.end();
-        capture('ssh_connection_attempted', { success: true });
+        telemetryService.capture('ssh_connection_attempted', { success: true });
         resolve({ success: true, latency, debugLogs });
       });
 
       client.on('error', (err: Error) => {
-        capture('ssh_connection_attempted', { success: false });
+        telemetryService.capture('ssh_connection_attempted', { success: false });
         resolve({ success: false, error: err.message, debugLogs });
       });
 
@@ -162,6 +163,7 @@ export const sshController = createRPCController({
         // ensure its stream/process is torn down immediately.
         proxySock?.destroy();
         capture('ssh_connection_attempted', { success: false });
+        telemetryService.capture('ssh_connection_attempted', { success: false });
         resolve({ success: false, error: (e as Error).message, debugLogs });
       }
     });

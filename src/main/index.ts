@@ -21,7 +21,7 @@ import { appSettingsService } from './core/settings/settings-service';
 import { updateService } from './core/updates/update-service';
 import { initializeDatabase } from './db/initialize';
 import { log } from './lib/logger';
-import * as telemetry from './lib/telemetry';
+import { telemetryService } from './lib/telemetry';
 import { rpcRouter } from './rpc';
 import { resolveUserEnv } from './utils/userEnv';
 
@@ -86,16 +86,16 @@ void app.whenReady().then(async () => {
   }
 
   try {
-    await telemetry.init({ installSource: app.isPackaged ? 'dmg' : 'dev' });
+    await telemetryService.initialize({ installSource: app.isPackaged ? 'dmg' : 'dev' });
   } catch (e) {
     log.warn('telemetry init failed:', e);
   }
 
   emdashAccountService.on('accountChanged', (username, userId, email) => {
-    void telemetry.identify(username, userId, email);
+    void telemetryService.identify(username, userId, email);
   });
   emdashAccountService.on('accountCleared', () => {
-    telemetry.clearIdentity();
+    telemetryService.clearIdentity();
   });
 
   gitWatcherRegistry.initialize();
@@ -133,8 +133,8 @@ void app.whenReady().then(async () => {
 });
 
 app.on('before-quit', () => {
-  telemetry.capture('app_closed');
-  telemetry.shutdown();
+  telemetryService.capture('app_closed');
+  telemetryService.dispose();
 
   agentHookService.dispose();
   updateService.dispose();
